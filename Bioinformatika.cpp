@@ -14,12 +14,13 @@ struct Read{
     string MSA_Sequence;
 };
 
-/*Struktura podataka Cluster za spremanje sličnih sekvenci*/
+/*Struktura podataka Cluster za spremanje sličnih sekvenci, sastoji se od vektora sekvenci i jedne konsenzusne sekvence*/
 struct Cluster{
     string representativeSequence;
     vector<Read> sequences;
 };
 
+/* Funkcija za računanje Hammingove udaljenosti između dvije sekvence*/
 int getHammingDistance(const string& sequence1, const string& sequence2){
     int distance = 0;
     for (size_t i = 0; i < sequence1.size(); i++) {
@@ -30,7 +31,7 @@ int getHammingDistance(const string& sequence1, const string& sequence2){
 
 int main() {
 
-    /*Definiranje strukture ulaza, granice za ulaz u klaster i liste klastera*/
+    /*Definiranje strukture ulaza (ulaz su .fastaq datoteke), granice za ulaz u klaster i liste klastera*/
     string header, NucleotideSequence, plus, qualityScore;
     int threshold = 12;
     vector<Cluster> myClusters;

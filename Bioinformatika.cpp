@@ -2,8 +2,15 @@
 #include <fstream>
 #include <vector>
 #include <string>
+#include <climits>
+#include <set>
+#include <map>
+#include <algorithm>
 
 #include "spoa/include/spoa/spoa.hpp"
+
+#include <filesystem>
+namespace fs = std::filesystem;
 
 using namespace std;
 
@@ -34,24 +41,132 @@ int main() {
     /*Definiranje strukture ulaza (ulaz su .fastaq datoteke), granice za ulaz u klaster i liste klastera*/
     string header, NucleotideSequence, plus, qualityScore;
     int threshold = 12;
-    vector<Cluster> myClusters;
-    vector<Read> Reads; 
+    
+    vector<Cluster> allClusters;
+    vector<Read> allRepresentatives;
 
-    /*Učitavanje datoteke*/
-    ifstream file("J29_B_CE_IonXpress_005.fastq");
+    /* Load all J*.fastq files */
+    for (const auto& entry : fs::directory_iterator("./fastq")) {
 
-    /*Čitanje datoteke, po 4 reda odjednom: header, sekvenca, plus i ocjena kvalitete (gleda se samo sekvenca, ostala tri reda zanemarujemo)*/
-    while (getline(file, header) && getline(file, NucleotideSequence) && getline(file, plus) && getline(file, qualityScore)){
+        string filename = entry.path().filename().string();
 
-        /*Gledamo samo sekvence najčešće duljine za sad*/
-        if (NucleotideSequence.length() == 296) {
-            Reads.push_back({
-                header,
-                NucleotideSequence,
-                ""
-            });
+        /* Only process files starting with J */
+        if (filename[0] == 'J') {
+
+            cout << "Loading file: " << filename << endl;
+
+            ifstream file(entry.path());
+
+            vector<Cluster> myClusters;
+            vector<Read> Reads; 
+
+
+            while (
+                getline(file, header) &&
+                getline(file, NucleotideSequence) &&
+                getline(file, plus) &&
+                getline(file, qualityScore)
+            ) {
+
+                if (NucleotideSequence.length() == 296) {
+
+                    Reads.push_back({
+                        filename + " | " + header,
+                        NucleotideSequence,
+                        ""
+                    });
+                }
+            }
+
+            /* Generiranje MSA*/
+
+            auto alignment_engine = spoa::AlignmentEngine::Create(spoa::AlignmentType::kNW, 0, -1, -1);  
+
+            spoa::Graph graph{};
+
+            for (const auto& it : Reads) {
+                auto alignment = alignment_engine->Align(it.originalSequence, graph);
+                graph.AddAlignment(alignment, it.originalSequence);
+            }
+
+            auto msa = graph.GenerateMultipleSequenceAlignment();
+
+            for (size_t i = 0; i < Reads.size(); i++) {
+                Reads[i].MSA_Sequence = msa[i];
+            }
+
+            /* Klasteriranje */
+
+            for (const Read& r : Reads) {
+
+                if (myClusters.empty()) {
+                    Cluster newCluster;
+                    newCluster.sequences.push_back(r);
+                    myClusters.push_back(newCluster);
+                    continue;
+                }
+
+                int bestClusterIndex = -1;
+                int bestDistance = INT_MAX;
+
+                for (int i = 0; i < myClusters.size(); i++) {
+
+                    int clusterMin = INT_MAX;
+
+                    for (const Read& s : myClusters[i].sequences) {
+                        int dist = getHammingDistance(s.MSA_Sequence, r.MSA_Sequence);
+                        clusterMin = min(clusterMin, dist);
+                    }
+
+                    if (clusterMin < bestDistance) {
+                        bestDistance = clusterMin;
+                        bestClusterIndex = i;
+                    }
+                }
+
+                if (bestDistance <= threshold) {
+                    myClusters[bestClusterIndex].sequences.push_back(r);
+                } else {
+                    Cluster newCluster;
+                    newCluster.sequences.push_back(r);
+                    myClusters.push_back(newCluster);
+                }
+            }
+
+            myClusters.erase(
+                remove_if(
+                    myClusters.begin(),
+                    myClusters.end(),
+                        [](const Cluster& c) {
+                        return c.sequences.size() <= 2;
+                    }
+                ),
+                    myClusters.end()
+            );
+
+            for (Cluster& c : myClusters) {
+
+                auto alignment_engine = spoa::AlignmentEngine::Create(
+                    spoa::AlignmentType::kNW, 0, -1, -1
+                );
+
+                spoa::Graph graph;
+
+                for (const Read& r : c.sequences) {
+                    auto alignment = alignment_engine->Align(r.originalSequence, graph);
+                    graph.AddAlignment(alignment, r.originalSequence);
+                }
+
+                auto consensus = graph.GenerateConsensus();
+                c.representativeSequence = consensus;
+            }
+
+            for (Cluster& c : myClusters) {
+                Read newRepresentative;
+                newRepresentative.originalSequence = c.representativeSequence;
+                allRepresentatives.push_back(newRepresentative);
+            }
         }
-
     }
 
     /* Generiranje MSA*/
@@ -60,50 +175,56 @@ int main() {
 
     spoa::Graph graph{};
 
-    for (const auto& it : Reads) {
+    for (const auto& it : allRepresentatives) {
         auto alignment = alignment_engine->Align(it.originalSequence, graph);
         graph.AddAlignment(alignment, it.originalSequence);
     }
 
     auto msa = graph.GenerateMultipleSequenceAlignment();
 
-    for (size_t i = 0; i < Reads.size(); i++) {
-        Reads[i].MSA_Sequence = msa[i];
+    for (size_t i = 0; i < allRepresentatives.size(); i++) {
+        allRepresentatives[i].MSA_Sequence = msa[i];
     }
 
     /* Klasteriranje */
 
-    for (const Read& r : Reads) {
+    for (const Read& r : allRepresentatives) {
 
-        bool assigned = false;
+        if (allClusters.empty()) {
+            Cluster newCluster;
+            newCluster.sequences.push_back(r);
+            allClusters.push_back(newCluster);
+            continue;
+        }
 
-        for (Cluster& c : myClusters) {
+        int bestClusterIndex = -1;
+        int bestDistance = INT_MAX;
 
-            bool fitsCluster = true;
+        for (int i = 0; i < allClusters.size(); i++) {
 
-            for (const Read& s : c.sequences) {
-                if (getHammingDistance(s.MSA_Sequence, r.MSA_Sequence) >= threshold) {
-                    fitsCluster = false;
-                    break;
-                }
+            int clusterMin = INT_MAX;
+
+            for (const Read& s : allClusters[i].sequences) {
+                int dist = getHammingDistance(s.MSA_Sequence, r.MSA_Sequence);
+                clusterMin = min(clusterMin, dist);
             }
 
-            if (fitsCluster) {
-                c.sequences.push_back(r);
-                assigned = true;
-                break;
+            if (clusterMin < bestDistance) {
+                bestDistance = clusterMin;
+                bestClusterIndex = i;
             }
         }
 
-        if (!assigned) {
+        if (bestDistance <= threshold) {
+            allClusters[bestClusterIndex].sequences.push_back(r);
+        } else {
             Cluster newCluster;
-            newCluster.representativeSequence = "";
             newCluster.sequences.push_back(r);
-            myClusters.push_back(newCluster);
+            allClusters.push_back(newCluster);
         }
     }
 
-    for (Cluster& c : myClusters) {
+    for (Cluster& c : allClusters) {
 
         auto alignment_engine = spoa::AlignmentEngine::Create(
             spoa::AlignmentType::kNW, 0, -1, -1
@@ -122,9 +243,9 @@ int main() {
 
     /*Ispis rezultata*/
 
-    cout << "Clusters: " << myClusters.size() << endl;
+    cout << "Clusters: " << allClusters.size() << endl;
 
-    for (Cluster &c : myClusters){
+    for (Cluster &c : allClusters){
         cout << "Cluster size: " << c.sequences.size() << endl;
         cout << "Representative: " << c.representativeSequence << endl << endl;
     }

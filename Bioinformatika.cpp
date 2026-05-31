@@ -224,7 +224,7 @@ int main() {
                 clusters << r.name << "\n";
             }
 
-            clusters << "\n--------------------------------\n\n";
+            clusters << "\n-----------------------------------\n\n";
         }
 
     /*Način rada da folder s datotekama*/

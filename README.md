@@ -3,14 +3,14 @@ Allele clustering project for Bioinformatics 1
 
 # How to use
 
-# 1. Clone repository
+ 1. Clone repository
 git clone https://github.com/your-username/your-repo-name.git
 cd your-repo-name
 
-# 2. Build the project
+ 2. Build the project
 g++ Bioinformatika.cpp -Ispoa/include -Lspoa/build/lib -lspoa -o Bioinformatika
 
-# 3. Run the program
+ 3. Run the program
 ./Bioinformatika
 
 # Input data
